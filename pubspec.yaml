@@ -1,0 +1,28 @@
+name: plastic_production_mobile
+description: Мобильное приложение для учёта производства и смен.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+  http: ^1.1.0
+  shared_preferences: ^2.2.2
+  intl: ^0.18.1
+  excel: ^4.0.2
+  pdf: ^3.10.8
+  image_picker: ^1.0.7
+  video_player: ^2.8.6
+  video_compress: ^3.1.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

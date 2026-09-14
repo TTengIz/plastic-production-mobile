@@ -1,0 +1,50 @@
+@"
+# ~~~ Служебное / ОС ~~~
+.DS_Store
+Thumbs.db
+*.log
+*.pyc
+*.swp
+.atom/
+.buildlog/
+.history
+.svn/
+
+# ~~~ IDE ~~~
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# ~~~ Flutter / Dart ~~~
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+app.*.symbols
+app.*.map.json
+
+# ~~~ Android ~~~~
+android/.gradle/
+android/local.properties
+android/app/build/
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# ~~~ Ключи подписи и секреты (НИКОГДА не коммитим) ~~~
+android/key.properties
+key.properties
+*.jks
+*.keystore
+
+# ~~~ Серверные секреты (если зеркалируем PHP-код в server/) ~~~
+server/config.php
+server/upload_log.txt
+server/debug.log
+"@ | Set-Content .gitignore -Encoding UTF8
