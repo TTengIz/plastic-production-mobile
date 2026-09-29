@@ -4,9 +4,6 @@ import 'package:image_picker/image_picker.dart';
 import '../services/media_service.dart';
 import '../services/auth_service.dart';
 import '../services/role_service.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../config/api_config.dart';
 
 class TrainingScreen extends StatefulWidget {
   const TrainingScreen({super.key});
@@ -21,15 +18,23 @@ class _TrainingScreenState extends State<TrainingScreen> {
   late final RoleService _roleService;
 
   bool _isLoading = false;
-  List<Map<String, dynamic>> _mediaFiles = [];
   String _selectedCategory = 'training';
+
+  // === Папки ===
+  List<Map<String, dynamic>> _folders = [];
+  int? _currentFolderId; // null = корень раздела
+  String? _currentFolderName;
+
+  // === Файлы ===
+  List<Map<String, dynamic>> _mediaFiles = [];
+
   VideoPlayerController? _videoController;
 
   @override
   void initState() {
     super.initState();
     _roleService = RoleService(_authService);
-    _loadMedia();
+    _loadAll();
   }
 
   @override
@@ -38,61 +43,85 @@ class _TrainingScreenState extends State<TrainingScreen> {
     super.dispose();
   }
 
-  Future<void> _loadMedia() async {
+  Future<void> _loadAll() async {
     if (mounted) setState(() => _isLoading = true);
 
-    try {
-      final response = await http.get(
-        Uri.parse('http://api.crystal-box.ru/API/media/get_media.php?category=$_selectedCategory'),
-      ).timeout(ApiConfig.connectionTimeout);
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['success'] == true) {
-          setState(() {
-            _mediaFiles = List<Map<String, dynamic>>.from(data['media']);
-          });
-        }
-      }
-    } catch (e) {
-      print('Ошибка загрузки медиа: $e');
+    if (_currentFolderId == null) {
+      // В корне: папки + файлы БЕЗ папки
+      final results = await Future.wait([
+        _mediaService.getFolders(category: _selectedCategory),
+        _mediaService.getMedia(category: _selectedCategory),
+      ]);
+      _folders = results[0];
+      _mediaFiles = results[1];
+    } else {
+      // Внутри папки: только файлы этой папки
+      _mediaFiles = await _mediaService.getMedia(
+        category: _selectedCategory,
+        folderId: _currentFolderId,
+      );
     }
 
     if (mounted) setState(() => _isLoading = false);
   }
 
-  void _showUploadOptions() {
-    final user = _authService.user;
-    if (user == null) return;
+  void _enterFolder(Map<String, dynamic> folder) {
+    setState(() {
+      _currentFolderId = int.tryParse(folder['id'].toString());
+      _currentFolderName = folder['name']?.toString() ?? 'Папка';
+      _mediaFiles = [];
+    });
+    _loadAll();
+  }
 
+  void _exitFolder() {
+    setState(() {
+      _currentFolderId = null;
+      _currentFolderName = null;
+    });
+    _loadAll();
+  }
+
+  // === Загрузка ===
+
+  void _showUploadOptions() {
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                _currentFolderId == null
+                    ? 'Загрузить в раздел'
+                    : 'Загрузить в папку «$_currentFolderName»',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+            ),
             ListTile(
               leading: const Icon(Icons.photo_camera),
-              title: const Text('Загрузить фото'),
-              onTap: () async {
+              title: const Text('Сделать фото'),
+              onTap: () {
                 Navigator.pop(context);
-                await _uploadImage(ImageSource.camera);
+                _uploadImage(ImageSource.camera);
               },
             ),
             ListTile(
               leading: const Icon(Icons.photo_library),
               title: const Text('Выбрать фото из галереи'),
-              onTap: () async {
+              onTap: () {
                 Navigator.pop(context);
-                await _uploadImage(ImageSource.gallery);
+                _uploadImage(ImageSource.gallery);
               },
             ),
             ListTile(
               leading: const Icon(Icons.videocam),
               title: const Text('Загрузить видео'),
-              onTap: () async {
+              onTap: () {
                 Navigator.pop(context);
-                await _uploadVideo();
+                _uploadVideo();
               },
             ),
           ],
@@ -111,6 +140,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
       category: _selectedCategory,
       uploadedBy: user['id'],
       source: source,
+      folderId: _currentFolderId,
     );
 
     if (mounted) setState(() => _isLoading = false);
@@ -120,10 +150,13 @@ class _TrainingScreenState extends State<TrainingScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Файл загружен'), backgroundColor: Colors.green),
         );
-        await _loadMedia();
+        await _loadAll();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result?['message'] ?? 'Ошибка загрузки'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(result?['error'] ?? result?['message'] ?? 'Ошибка загрузки'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -138,6 +171,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final result = await _mediaService.pickAndUploadVideo(
       category: _selectedCategory,
       uploadedBy: user['id'],
+      folderId: _currentFolderId,
     );
 
     if (mounted) setState(() => _isLoading = false);
@@ -147,35 +181,142 @@ class _TrainingScreenState extends State<TrainingScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Видео загружено'), backgroundColor: Colors.green),
         );
-        await _loadMedia();
+        await _loadAll();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result?['message'] ?? 'Ошибка загрузки'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(result?['error'] ?? result?['message'] ?? 'Ошибка загрузки'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
   }
 
-  // ===== НОВОЕ: удаление файла с подтверждением =====
+  // === Создание папки ===
+
+  Future<void> _showCreateFolderDialog() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Новая папка'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Название папки',
+            hintText: 'Например: Термопластавтоматы',
+            border: OutlineInputBorder(),
+          ),
+          maxLength: 100,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Создать'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null || result.isEmpty) return;
+
+    setState(() => _isLoading = true);
+    final response = await _mediaService.createFolder(
+      name: result,
+      category: _selectedCategory,
+    );
+    setState(() => _isLoading = false);
+
+    if (mounted) {
+      if (response['success'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Папка создана'), backgroundColor: Colors.green),
+        );
+        await _loadAll();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(response['error'] ?? response['message'] ?? 'Ошибка создания'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // === Удаление папки ===
+
+  Future<void> _confirmDeleteFolder(Map<String, dynamic> folder) async {
+    final id = int.tryParse(folder['id'].toString()) ?? 0;
+    final name = folder['name']?.toString() ?? 'Папка';
+    final count = int.tryParse(folder['files_count'].toString()) ?? 0;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить папку?'),
+        content: Text(
+          count > 0
+              ? 'Удалить папку «$name»? Файлы из неё ($count шт.) вернутся в раздел без папки.'
+              : 'Удалить пустую папку «$name»?',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || id <= 0) return;
+
+    setState(() => _isLoading = true);
+    final result = await _mediaService.deleteFolder(folderId: id);
+    setState(() => _isLoading = false);
+
+    if (mounted) {
+      if (result['success'] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Папка удалена'), backgroundColor: Colors.green),
+        );
+        await _loadAll();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['error'] ?? result['message'] ?? 'Ошибка удаления'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // === Удаление файла ===
+
   Future<void> _confirmDeleteMedia(Map<String, dynamic> media) async {
     final mediaId = int.tryParse(media['id'].toString()) ?? 0;
     final fileName = media['file_name'] ?? 'файл';
-
     if (mediaId <= 0) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         title: const Text('Удалить файл?'),
         content: Text('«$fileName» будет удалён с сервера и из облака. Это действие нельзя отменить.'),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Отмена'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Отмена')),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Удалить'),
           ),
         ],
@@ -184,22 +325,20 @@ class _TrainingScreenState extends State<TrainingScreen> {
 
     if (confirmed != true) return;
 
-    if (mounted) setState(() => _isLoading = true);
-
+    setState(() => _isLoading = true);
     final result = await _mediaService.deleteMedia(mediaId: mediaId);
-
-    if (mounted) setState(() => _isLoading = false);
+    setState(() => _isLoading = false);
 
     if (mounted) {
       if (result['success'] == true) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Файл удалён'), backgroundColor: Colors.green),
         );
-        await _loadMedia();
+        await _loadAll();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(result['message'] ?? result['error'] ?? 'Ошибка удаления'),
+            content: Text(result['error'] ?? result['message'] ?? 'Ошибка удаления'),
             backgroundColor: Colors.red,
           ),
         );
@@ -207,41 +346,32 @@ class _TrainingScreenState extends State<TrainingScreen> {
     }
   }
 
+  // === Просмотр ===
+
   Future<void> _showMediaViewer(Map<String, dynamic> media) async {
-    String fileUrl = media['file_url'] ?? '';
-    final fileType = media['file_type'] ?? '';
-    final fileName = media['file_name'] ?? '';
+    final fileUrl = media['file_url']?.toString() ?? '';
+    final fileType = media['file_type']?.toString() ?? '';
+    final fileName = media['file_name']?.toString() ?? '';
 
-    print('🎬 Открываем: $fileName');
-    print('🔗 URL: $fileUrl');
-    print('️ Тип: $fileType');
-
-    // Определяем видео по расширению ИЛИ по типу
     final isVideo = fileType.startsWith('video/') ||
         fileName.toLowerCase().endsWith('.mp4') ||
         fileName.toLowerCase().endsWith('.avi') ||
         fileName.toLowerCase().endsWith('.mov') ||
         fileName.toLowerCase().endsWith('.mkv');
 
-    print('🎥 Это видео: $isVideo');
-
     if (isVideo) {
-      // Для видео - используем прокси
       final cleanFileName = fileUrl.split('/').last.split('?').first;
       final proxyUrl = 'http://api.crystal-box.ru/API/media/proxy.php?file=$cleanFileName';
-      print('🎥 Proxy URL: $proxyUrl');
 
       await _videoController?.dispose();
-
       _videoController = VideoPlayerController.networkUrl(Uri.parse(proxyUrl));
       await _videoController!.initialize();
 
       if (mounted) {
         setState(() {});
-
         showDialog(
           context: context,
-          builder: (context) => Dialog(
+          builder: (ctx) => Dialog(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -253,7 +383,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                       icon: const Icon(Icons.close),
                       onPressed: () {
                         _videoController?.pause();
-                        Navigator.pop(context);
+                        Navigator.pop(ctx);
                       },
                     ),
                   ],
@@ -262,18 +392,13 @@ class _TrainingScreenState extends State<TrainingScreen> {
                   aspectRatio: _videoController!.value.aspectRatio,
                   child: VideoPlayer(_videoController!),
                 ),
-                VideoProgressIndicator(
-                  _videoController!,
-                  allowScrubbing: true,
-                ),
+                VideoProgressIndicator(_videoController!, allowScrubbing: true),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     IconButton(
                       icon: Icon(
-                        _videoController!.value.isPlaying
-                            ? Icons.pause
-                            : Icons.play_arrow,
+                        _videoController!.value.isPlaying ? Icons.pause : Icons.play_arrow,
                       ),
                       onPressed: () {
                         setState(() {
@@ -291,11 +416,10 @@ class _TrainingScreenState extends State<TrainingScreen> {
         );
       }
     } else {
-      // Для фото
       if (mounted) {
         showDialog(
           context: context,
-          builder: (context) => Dialog(
+          builder: (ctx) => Dialog(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -303,10 +427,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                   title: Text(fileName),
                   automaticallyImplyLeading: false,
                   actions: [
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
-                    ),
+                    IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
                   ],
                 ),
                 InteractiveViewer(
@@ -320,101 +441,217 @@ class _TrainingScreenState extends State<TrainingScreen> {
     }
   }
 
+  // === UI helpers ===
+
+  String _categoryTitle(String c) {
+    switch (c) {
+      case 'training':
+        return 'Обучение';
+      case 'products':
+        return 'Изделия';
+      case 'other':
+        return 'Другое';
+      default:
+        return c;
+    }
+  }
+
+  Widget _buildFolderTile(Map<String, dynamic> folder) {
+    final canEdit = _roleService.isAdmin || _roleService.isManager;
+    final name = folder['name']?.toString() ?? 'Папка';
+    final count = int.tryParse(folder['files_count'].toString()) ?? 0;
+
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: Colors.amber.shade100,
+          child: const Icon(Icons.folder, color: Colors.amber),
+        ),
+        title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: Text('$count ${_pluralFiles(count)}'),
+        trailing: canEdit
+            ? IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                onPressed: () => _confirmDeleteFolder(folder),
+              )
+            : null,
+        onTap: () => _enterFolder(folder),
+      ),
+    );
+  }
+
+  String _pluralFiles(int n) {
+    final mod10 = n % 10;
+    final mod100 = n % 100;
+    if (mod10 == 1 && mod100 != 11) return 'файл';
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'файла';
+    return 'файлов';
+  }
+
+  Widget _buildFileTile(Map<String, dynamic> media) {
+    final canEdit = _roleService.isAdmin || _roleService.isManager;
+    final fileType = media['file_type']?.toString() ?? '';
+    final isVideo = fileType.startsWith('video/');
+
+    return Card(
+      child: ListTile(
+        leading: CircleAvatar(
+          backgroundColor: isVideo ? Colors.purple : Colors.blue,
+          child: Icon(isVideo ? Icons.videocam : Icons.image, color: Colors.white),
+        ),
+        title: Text(
+          media['file_name']?.toString() ?? 'Без названия',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Text('Тип: $fileType'),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.visibility, color: Colors.blue),
+              onPressed: () => _showMediaViewer(media),
+            ),
+            if (canEdit)
+              IconButton(
+                icon: const Icon(Icons.delete, color: Colors.red),
+                onPressed: () => _confirmDeleteMedia(media),
+              ),
+          ],
+        ),
+        onTap: () => _showMediaViewer(media),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final canEdit = _roleService.isAdmin || _roleService.isManager;
+    final inFolder = _currentFolderId != null;
 
     return Scaffold(
+      appBar: inFolder
+          ? AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: _exitFolder,
+              ),
+              title: Text(_currentFolderName ?? 'Папка'),
+            )
+          : null,
       floatingActionButton: canEdit
-          ? FloatingActionButton.extended(
-              onPressed: _showUploadOptions,
-              icon: const Icon(Icons.upload),
-              label: const Text('Загрузить'),
+          ? Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!inFolder)
+                  FloatingActionButton(
+                    heroTag: 'add_folder',
+                    onPressed: _showCreateFolderDialog,
+                    child: const Icon(Icons.create_new_folder),
+                  ),
+                if (!inFolder) const SizedBox(height: 12),
+                FloatingActionButton.extended(
+                  heroTag: 'upload',
+                  onPressed: _showUploadOptions,
+                  icon: const Icon(Icons.upload),
+                  label: Text(inFolder ? 'Загрузить' : 'Загрузить'),
+                ),
+              ],
             )
           : null,
       body: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
-            child: Row(
-              children: [
-                Expanded(
-                  child: SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(value: 'training', label: Text('Обучение')),
-                      ButtonSegment(value: 'products', label: Text('Изделия')),
-                      ButtonSegment(value: 'other', label: Text('Другое')),
-                    ],
-                    selected: {_selectedCategory},
-                    onSelectionChanged: (Set<String> newSelection) {
-                      setState(() {
-                        _selectedCategory = newSelection.first;
-                      });
-                      _loadMedia();
-                    },
-                  ),
-                ),
-              ],
+          // Переключатель категорий (только в корне)
+          if (!inFolder)
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+              child: SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'training', label: Text('Обучение')),
+                  ButtonSegment(value: 'products', label: Text('Изделия')),
+                  ButtonSegment(value: 'other', label: Text('Другое')),
+                ],
+                selected: {_selectedCategory},
+                onSelectionChanged: (Set<String> newSelection) {
+                  setState(() => _selectedCategory = newSelection.first);
+                  _loadAll();
+                },
+              ),
             ),
-          ),
           Expanded(
             child: RefreshIndicator(
-              onRefresh: _loadMedia,
+              onRefresh: _loadAll,
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : _mediaFiles.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.folder_open, size: 80, color: Colors.grey.withOpacity(0.5)),
-                              const SizedBox(height: 16),
-                              Text('Нет файлов', style: Theme.of(context).textTheme.headlineSmall),
-                            ],
-                          ),
-                        )
-                      : ListView.builder(
-                          padding: const EdgeInsets.all(16),
-                          itemCount: _mediaFiles.length,
-                          itemBuilder: (context, index) {
-                            final media = _mediaFiles[index];
-                            final isVideo = (media['file_type'] ?? '').toString().startsWith('video/');
-
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 12),
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: isVideo ? Colors.purple : Colors.blue,
-                                  child: Icon(
-                                    isVideo ? Icons.videocam : Icons.image,
-                                    color: Colors.white,
+                  : _folders.isEmpty && _mediaFiles.isEmpty
+                      ? ListView(
+                          children: [
+                            const SizedBox(height: 120),
+                            Center(
+                              child: Column(
+                                children: [
+                                  Icon(
+                                    inFolder ? Icons.videocam_off : Icons.folder_open,
+                                    size: 80,
+                                    color: Colors.grey.withOpacity(0.5),
                                   ),
-                                ),
-                                title: Text(
-                                  media['file_name'] ?? 'Без названия',
-                                  style: const TextStyle(fontWeight: FontWeight.bold),
-                                ),
-                                subtitle: Text('Тип: ${media['file_type']}'),
-                                // ===== ИЗМЕНЕНО: кнопка просмотра + кнопка удаления =====
-                                trailing: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.visibility, color: Colors.blue),
-                                      onPressed: () => _showMediaViewer(media),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    inFolder ? 'В папке пока пусто' : 'Нет файлов и папок',
+                                    style: Theme.of(context).textTheme.headlineSmall,
+                                  ),
+                                  if (!inFolder)
+                                    Text(
+                                      'Раздел: ${_categoryTitle(_selectedCategory)}',
+                                      style: const TextStyle(color: Colors.grey),
                                     ),
-                                    if (canEdit)
-                                      IconButton(
-                                        icon: const Icon(Icons.delete, color: Colors.red),
-                                        onPressed: () => _confirmDeleteMedia(media),
-                                      ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        )
+                      : ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: [
+                            // === В корне: сначала папки ===
+                            if (!inFolder && _folders.isNotEmpty) ...[
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.folder, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Папки',
+                                      style: Theme.of(context).textTheme.titleMedium,
+                                    ),
                                   ],
                                 ),
-                                onTap: () => _showMediaViewer(media),
                               ),
-                            );
-                          },
+                              ..._folders.map(_buildFolderTile),
+                              const SizedBox(height: 16),
+                            ],
+
+                            // === В корне: секция "Без папки" (если есть файлы) ===
+                            if (!inFolder && _mediaFiles.isNotEmpty) ...[
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.video_library, size: 20),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Без папки',
+                                      style: Theme.of(context).textTheme.titleMedium,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+
+                            // === Файлы (в корне — без папки; внутри — только этой папки) ===
+                            ..._mediaFiles.map(_buildFileTile),
+                          ],
                         ),
             ),
           ),
