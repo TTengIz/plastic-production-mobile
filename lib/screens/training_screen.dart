@@ -542,18 +542,19 @@ class _TrainingScreenState extends State<TrainingScreen> {
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!inFolder)
+                if (!inFolder || _selectedCategory == 'training') ...[
                   FloatingActionButton(
                     heroTag: 'add_folder',
                     onPressed: _showCreateFolderDialog,
                     child: const Icon(Icons.create_new_folder),
                   ),
-                if (!inFolder) const SizedBox(height: 12),
+                  const SizedBox(height: 12),
+                ],
                 FloatingActionButton.extended(
                   heroTag: 'upload',
                   onPressed: _showUploadOptions,
                   icon: const Icon(Icons.upload),
-                  label: Text(inFolder ? 'Загрузить' : 'Загрузить'),
+                  label: const Text('Загрузить'),
                 ),
               ],
             )
