@@ -55,11 +55,13 @@ class _TrainingScreenState extends State<TrainingScreen> {
       _folders = results[0];
       _mediaFiles = results[1];
     } else {
-      // Внутри папки: только файлы этой папки
-      _mediaFiles = await _mediaService.getMedia(
-        category: _selectedCategory,
-        folderId: _currentFolderId,
-      );
+      // Внутри папки: подпапки + файлы этой папки
+      final results = await Future.wait([
+        _mediaService.getFolders(category: _selectedCategory, parentId: _currentFolderId),
+        _mediaService.getMedia(category: _selectedCategory, folderId: _currentFolderId),
+      ]);
+      _folders = results[0];
+      _mediaFiles = results[1];
     }
 
     if (mounted) setState(() => _isLoading = false);
@@ -200,14 +202,16 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final result = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Новая папка'),
+        title: Text(_currentFolderId == null ? 'Новая папка' : 'Новая подпапка'),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Название папки',
-            hintText: 'Например: Термопластавтоматы',
-            border: OutlineInputBorder(),
+          decoration: InputDecoration(
+            labelText: 'Название',
+            hintText: _currentFolderId == null
+                ? 'Например: Термопластавтоматы'
+                : 'Внутри «$_currentFolderName»',
+            border: const OutlineInputBorder(),
           ),
           maxLength: 100,
         ),
@@ -230,6 +234,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final response = await _mediaService.createFolder(
       name: result,
       category: _selectedCategory,
+      parentId: _currentFolderId, // <-- ВОТ ЭТО БЫЛО ПРОПУЩЕНО!
     );
     setState(() => _isLoading = false);
 
@@ -574,7 +579,11 @@ class _TrainingScreenState extends State<TrainingScreen> {
                 ],
                 selected: {_selectedCategory},
                 onSelectionChanged: (Set<String> newSelection) {
-                  setState(() => _selectedCategory = newSelection.first);
+                  setState(() {
+                    _selectedCategory = newSelection.first;
+                    _currentFolderId = null; // Сброс при смене раздела
+                    _currentFolderName = null;
+                  });
                   _loadAll();
                 },
               ),
@@ -592,7 +601,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                               child: Column(
                                 children: [
                                   Icon(
-                                    inFolder ? Icons.videocam_off : Icons.folder_open,
+                                    inFolder ? Icons.folder_open : Icons.folder_open,
                                     size: 80,
                                     color: Colors.grey.withOpacity(0.5),
                                   ),
@@ -614,8 +623,8 @@ class _TrainingScreenState extends State<TrainingScreen> {
                       : ListView(
                           padding: const EdgeInsets.all(16),
                           children: [
-                            // === В корне: сначала папки ===
-                            if (!inFolder && _folders.isNotEmpty) ...[
+                            // === Папки (в корне или подпапки внутри папки) ===
+                            if (_folders.isNotEmpty) ...[
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
                                 child: Row(
@@ -623,7 +632,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                                     const Icon(Icons.folder, size: 20),
                                     const SizedBox(width: 8),
                                     Text(
-                                      'Папки',
+                                      inFolder ? 'Подпапки' : 'Папки',
                                       style: Theme.of(context).textTheme.titleMedium,
                                     ),
                                   ],
@@ -651,7 +660,24 @@ class _TrainingScreenState extends State<TrainingScreen> {
                             ],
 
                             // === Файлы (в корне — без папки; внутри — только этой папки) ===
-                            ..._mediaFiles.map(_buildFileTile),
+                            if (_mediaFiles.isNotEmpty) ...[
+                              if (inFolder) ...[
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 8),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.video_library, size: 20),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        'Файлы',
+                                        style: Theme.of(context).textTheme.titleMedium,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              ..._mediaFiles.map(_buildFileTile),
+                            ],
                           ],
                         ),
             ),

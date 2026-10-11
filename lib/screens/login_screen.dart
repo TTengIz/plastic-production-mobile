@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dashboard_screen.dart';
 import 'register_screen.dart';
 import '../services/auth_service.dart';
+import '../services/update_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -46,6 +47,11 @@ class _LoginScreenState extends State<LoginScreen> {
       if (error == null && mounted) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('token', _authService.token);
+
+        // <-- ДОБАВЛЕНО: проверка обновлений при входе
+        await showUpdateCheck(context);
+
+        if (!mounted) return;
 
         Navigator.pushReplacement(
           context,

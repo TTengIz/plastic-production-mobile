@@ -33,7 +33,6 @@ class MediaService {
         Uri.parse('http://api.crystal-box.ru/API/media/upload_multipart.php'),
       );
 
-      // Заголовки токена (MultipartRequest использует отдельный метод)
       request.headers.addAll(_headers);
 
       request.files.add(
@@ -168,8 +167,18 @@ class MediaService {
   Future<Map<String, dynamic>> createFolder({
     required String name,
     required String category,
+    int? parentId,
   }) async {
     try {
+      final body = <String, dynamic>{
+        'name': name.trim(),
+        'category': category,
+      };
+      
+      if (parentId != null && parentId > 0) {
+        body['parent_id'] = parentId;
+      }
+
       final response = await http
           .post(
             Uri.parse('http://api.crystal-box.ru/API/media/create_folder.php'),
@@ -177,10 +186,7 @@ class MediaService {
               'Content-Type': 'application/json',
               ..._headers,
             },
-            body: jsonEncode({
-              'name': name.trim(),
-              'category': category,
-            }),
+            body: jsonEncode(body),
           )
           .timeout(const Duration(seconds: 30));
 
@@ -195,13 +201,18 @@ class MediaService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getFolders({required String category}) async {
+  Future<List<Map<String, dynamic>>> getFolders({
+    required String category,
+    int? parentId,
+  }) async {
     try {
+      String url = 'http://api.crystal-box.ru/API/media/get_folders.php?category=$category';
+      if (parentId != null && parentId > 0) {
+        url += '&parent_id=$parentId';
+      }
+
       final response = await http
-          .get(
-            Uri.parse('http://api.crystal-box.ru/API/media/get_folders.php?category=$category'),
-            headers: _headers,
-          )
+          .get(Uri.parse(url), headers: _headers)
           .timeout(ApiConfig.connectionTimeout);
 
       if (response.statusCode == 200) {
