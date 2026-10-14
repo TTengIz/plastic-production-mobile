@@ -35,6 +35,9 @@ class _BlanksScreenState extends State<BlanksScreen> {
     if (mounted) setState(() => _isLoading = false);
   }
 
+  /// Безопасный парсер id (сервер возвращает id как строку)
+  int _toInt(dynamic value) => int.tryParse(value.toString()) ?? 0;
+
   void _showAddBlanksDialog() {
     final quantityController = TextEditingController(text: '1');
     int? selectedRecipeId;
@@ -55,7 +58,7 @@ class _BlanksScreenState extends State<BlanksScreen> {
                   ),
                   items: _recipes.map((recipe) {
                     return DropdownMenuItem<int>(
-                      value: recipe['id'],
+                      value: _toInt(recipe['id']),
                       child: Text(
                         '${recipe['blank_name']} (${recipe['material_name']}, ${recipe['thickness']})',
                       ),
@@ -83,11 +86,14 @@ class _BlanksScreenState extends State<BlanksScreen> {
                   const SizedBox(height: 12),
                   Builder(
                     builder: (context) {
-                      final recipe = _recipes.firstWhere((r) => r['id'] == selectedRecipeId);
-                      final blanksPerSheet = recipe['blanks_per_sheet'] ?? 1;
+                      final recipe = _recipes.firstWhere(
+                        (r) => _toInt(r['id']) == selectedRecipeId,
+                        orElse: () => <String, dynamic>{},
+                      );
+                      final blanksPerSheet = _toInt(recipe['blanks_per_sheet']);
                       final quantity = int.tryParse(quantityController.text) ?? 0;
                       final sheetsNeeded = blanksPerSheet > 0 ? (quantity / blanksPerSheet).ceil() : 0;
-                      
+
                       return Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -144,33 +150,56 @@ class _BlanksScreenState extends State<BlanksScreen> {
                 }
 
                 Navigator.pop(dialogContext);
-                
-                final user = _authService.user;
-                if (user == null) return;
+
+                // === ИСПРАВЛЕНО: используем геттер userId вместо user['id'] ===
+                final userId = _authService.userId;
+                if (userId == null) {
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Ошибка: не определён пользователь. Войдите заново.'),
+                        backgroundColor: Colors.red,
+                      ),
+                    );
+                  }
+                  return;
+                }
 
                 if (mounted) setState(() => _isLoading = true);
 
-                final result = await _blanksService.addBlanks(
-                  recipeId: selectedRecipeId!,
-                  quantity: quantity,
-                  userId: user['id'],
-                );
+                try {
+                  final result = await _blanksService.addBlanks(
+                    recipeId: selectedRecipeId!,
+                    quantity: quantity,
+                    userId: userId,
+                  );
 
-                if (mounted) setState(() => _isLoading = false);
+                  if (mounted) setState(() => _isLoading = false);
 
-                if (mounted) {
-                  if (result['success'] == true) {
+                  if (mounted) {
+                    if (result['success'] == true) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result['message'] ?? 'Заготовки добавлены'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                      await _loadData();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result['message'] ?? 'Ошибка добавления'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  if (mounted) setState(() => _isLoading = false);
+                  if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(result['message'] ?? 'Заготовки добавлены'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                    await _loadData();
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(result['message'] ?? 'Ошибка добавления'),
+                        content: Text('Ошибка: $e'),
                         backgroundColor: Colors.red,
                       ),
                     );
@@ -186,9 +215,10 @@ class _BlanksScreenState extends State<BlanksScreen> {
   }
 
   void _showEditBlanksDialog(Map<String, dynamic> blank) {
-    final currentQuantity = blank['quantity'] ?? 0;
+    final currentQuantity = _toInt(blank['quantity']);
     final addController = TextEditingController();
-    final blanksPerSheet = blank['blanks_per_sheet'] ?? 1;
+    final blanksPerSheet = _toInt(blank['blanks_per_sheet']);
+    final blankId = _toInt(blank['id']);
 
     showDialog(
       context: context,
@@ -234,7 +264,7 @@ class _BlanksScreenState extends State<BlanksScreen> {
                 Builder(
                   builder: (context) {
                     final addQuantity = int.tryParse(addController.text) ?? 0;
-                    
+
                     if (addQuantity > 0) {
                       final additionalSheets = blanksPerSheet > 0 ? (addQuantity / blanksPerSheet).ceil() : 0;
                       final newTotal = currentQuantity + addQuantity;
@@ -276,15 +306,15 @@ class _BlanksScreenState extends State<BlanksScreen> {
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(color: Colors.red),
                         ),
-                        child: Row(
+                        child: const Row(
                           children: [
-                            const Icon(Icons.error, color: Colors.red, size: 20),
-                            const SizedBox(width: 8),
+                            Icon(Icons.error, color: Colors.red, size: 20),
+                            SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 'Нельзя добавить отрицательное число!',
                                 style: TextStyle(
-                                  color: Colors.red[700],
+                                  color: Colors.red,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
@@ -307,7 +337,7 @@ class _BlanksScreenState extends State<BlanksScreen> {
             ElevatedButton(
               onPressed: () async {
                 final addQuantity = int.tryParse(addController.text);
-                
+
                 if (addQuantity == null || addQuantity < 1) {
                   if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -322,28 +352,37 @@ class _BlanksScreenState extends State<BlanksScreen> {
 
                 final newTotal = currentQuantity + addQuantity;
 
-                final result = await _blanksService.updateBlanks(
-                  blankId: blank['id'],
-                  newQuantity: newTotal,
-                );
+                try {
+                  final result = await _blanksService.updateBlanks(
+                    blankId: blankId,
+                    newQuantity: newTotal,
+                  );
 
-                if (mounted) setState(() => _isLoading = false);
+                  if (mounted) setState(() => _isLoading = false);
 
-                if (mounted) {
-                  if (result['success'] == true) {
+                  if (mounted) {
+                    if (result['success'] == true) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result['message'] ?? 'Добавлено $addQuantity шт'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                      await _loadData();
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result['message'] ?? 'Ошибка добавления'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
+                } catch (e) {
+                  if (mounted) setState(() => _isLoading = false);
+                  if (mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(result['message'] ?? 'Добавлено $addQuantity шт'),
-                        backgroundColor: Colors.green,
-                      ),
-                    );
-                    await _loadData();
-                  } else {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(result['message'] ?? 'Ошибка добавления'),
-                        backgroundColor: Colors.red,
-                      ),
+                      SnackBar(content: Text('Ошибка: $e'), backgroundColor: Colors.red),
                     );
                   }
                 }
@@ -456,6 +495,7 @@ class _BlanksScreenState extends State<BlanksScreen> {
                     itemCount: _blanks.length,
                     itemBuilder: (context, index) {
                       final blank = _blanks[index];
+                      final blankId = _toInt(blank['id']);
                       return Card(
                         margin: const EdgeInsets.only(bottom: 12),
                         child: ListTile(
@@ -477,12 +517,12 @@ class _BlanksScreenState extends State<BlanksScreen> {
                               if (blank['thickness'] != null && blank['thickness'].toString().isNotEmpty)
                                 Text('Толщина: ${blank['thickness']}'),
                               Text(
-                                'Количество: ${blank['quantity'] ?? 0} шт',
+                                'Количество: ${_toInt(blank['quantity'])} шт',
                                 style: const TextStyle(fontWeight: FontWeight.bold),
                               ),
                               Text(
-                                'Списано листов: ${blank['sheets_used'] ?? 0}',
-                                style: TextStyle(
+                                'Списано листов: ${_toInt(blank['sheets_used'])}',
+                                style: const TextStyle(
                                   color: Colors.orange,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -505,7 +545,7 @@ class _BlanksScreenState extends State<BlanksScreen> {
                                       icon: const Icon(Icons.delete, color: Colors.red),
                                       onPressed: () {
                                         _showDeleteConfirmation(
-                                          blank['id'],
+                                          blankId,
                                           blank['blank_name'] ?? 'заготовку',
                                         );
                                       },

@@ -29,6 +29,8 @@ class UpdateService {
       final info = await PackageInfo.fromPlatform();
       final currentCode = int.tryParse(info.buildNumber) ?? 0;
 
+      print('🔍 Проверка обновлений: текущая=$currentCode');
+
       final response = await http
           .get(Uri.parse('$manifestUrl?t=${DateTime.now().millisecondsSinceEpoch}'))
           .timeout(const Duration(seconds: 10));
@@ -38,7 +40,10 @@ class UpdateService {
       final data = jsonDecode(response.body);
       final serverCode = int.tryParse(data['version_code']?.toString() ?? '') ?? 0;
 
+      print('🔍 Проверка обновлений: серверная=$serverCode');
+
       if (serverCode > currentCode) {
+        print('🔍 Обновление доступно!');
         return UpdateInfo(
           versionCode: serverCode,
           versionName: data['version_name']?.toString() ?? '',
@@ -82,6 +87,9 @@ class UpdateService {
   }
 
   Future<void> openApk(File file) async {
+    // Открываем системный установщик Android.
+    // Приложение остаётся открытым; новая версия подхватится
+    // при следующем запуске.
     await OpenFilex.open(file.path);
   }
 }

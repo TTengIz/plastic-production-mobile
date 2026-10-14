@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'dashboard_screen.dart';
 import 'register_screen.dart';
 import '../services/auth_service.dart';
@@ -48,7 +49,7 @@ class _LoginScreenState extends State<LoginScreen> {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('token', _authService.token);
 
-        // <-- ДОБАВЛЕНО: проверка обновлений при входе
+        // Проверка обновлений при входе
         await showUpdateCheck(context);
 
         if (!mounted) return;
@@ -175,6 +176,19 @@ class _LoginScreenState extends State<LoginScreen> {
                         );
                       },
                       child: const Text('Нет аккаунта? Зарегистрироваться'),
+                    ),
+                    const SizedBox(height: 24),
+                    FutureBuilder<PackageInfo>(
+                      future: PackageInfo.fromPlatform(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) return const SizedBox.shrink();
+                        return Text(
+                          'Версия ${snapshot.data!.version} (сборка ${snapshot.data!.buildNumber})',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Colors.grey,
+                              ),
+                        );
+                      },
                     ),
                   ],
                 ),

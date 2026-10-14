@@ -1,7 +1,7 @@
 name: plastic_production_mobile
 description: Мобильное приложение для учёта производства и смен.
 publish_to: 'none'
-version: 1.1.0+3
+version: 1.2.0+6
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

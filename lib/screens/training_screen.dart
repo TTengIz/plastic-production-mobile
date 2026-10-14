@@ -358,6 +358,19 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final fileType = media['file_type']?.toString() ?? '';
     final fileName = media['file_name']?.toString() ?? '';
 
+    if (fileUrl.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Файл недоступен (нет URL)'), backgroundColor: Colors.red),
+        );
+      }
+      return;
+    }
+
+    // Имя файла в S3 = последний сегмент URL
+    final cleanFileName = fileUrl.split('/').last.split('?').first;
+    final proxyUrl = 'http://api.crystal-box.ru/API/media/proxy.php?file=$cleanFileName';
+
     final isVideo = fileType.startsWith('video/') ||
         fileName.toLowerCase().endsWith('.mp4') ||
         fileName.toLowerCase().endsWith('.avi') ||
@@ -365,84 +378,160 @@ class _TrainingScreenState extends State<TrainingScreen> {
         fileName.toLowerCase().endsWith('.mkv');
 
     if (isVideo) {
-      final cleanFileName = fileUrl.split('/').last.split('?').first;
-      final proxyUrl = 'http://api.crystal-box.ru/API/media/proxy.php?file=$cleanFileName';
-
       await _videoController?.dispose();
       _videoController = VideoPlayerController.networkUrl(Uri.parse(proxyUrl));
-      await _videoController!.initialize();
 
-      if (mounted) {
-        setState(() {});
+      bool initFailed = false;
+      String initError = '';
+      try {
+        await _videoController!.initialize().timeout(const Duration(seconds: 30));
+      } catch (e) {
+        initFailed = true;
+        initError = e.toString();
+        print('Ошибка инициализации видео: $e');
+      }
+
+      if (!mounted) return;
+
+      if (initFailed || !_videoController!.value.isInitialized) {
+        await _videoController?.dispose();
+        _videoController = null;
         showDialog(
           context: context,
-          builder: (ctx) => Dialog(
-            child: Column(
+          builder: (ctx) => AlertDialog(
+            title: const Text('Не удалось открыть видео'),
+            content: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                AppBar(
-                  title: Text(fileName),
-                  automaticallyImplyLeading: false,
-                  actions: [
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        _videoController?.pause();
-                        Navigator.pop(ctx);
-                      },
-                    ),
-                  ],
-                ),
-                AspectRatio(
-                  aspectRatio: _videoController!.value.aspectRatio,
-                  child: VideoPlayer(_videoController!),
-                ),
-                VideoProgressIndicator(_videoController!, allowScrubbing: true),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        _videoController!.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _videoController!.value.isPlaying
-                              ? _videoController!.pause()
-                              : _videoController!.play();
-                        });
-                      },
-                    ),
-                  ],
-                ),
+                Text('Файл: $fileName'),
+                const SizedBox(height: 8),
+                SelectableText('URL: $proxyUrl', style: const TextStyle(fontSize: 11)),
+                if (initError.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  SelectableText('Ошибка: $initError',
+                      style: const TextStyle(fontSize: 11, color: Colors.red)),
+                ],
               ],
             ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Закрыть')),
+            ],
           ),
         );
+        return;
       }
+
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppBar(
+                title: Text(fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                automaticallyImplyLeading: false,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      _videoController?.pause();
+                      Navigator.pop(ctx);
+                    },
+                  ),
+                ],
+              ),
+              AspectRatio(
+                aspectRatio: _videoController!.value.aspectRatio > 0
+                    ? _videoController!.value.aspectRatio
+                    : 16 / 9,
+                child: VideoPlayer(_videoController!),
+              ),
+              VideoProgressIndicator(_videoController!, allowScrubbing: true),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  IconButton(
+                    icon: Icon(
+                      _videoController!.value.isPlaying ? Icons.pause : Icons.play_arrow,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _videoController!.value.isPlaying
+                            ? _videoController!.pause()
+                            : _videoController!.play();
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      );
     } else {
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => Dialog(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                AppBar(
-                  title: Text(fileName),
-                  automaticallyImplyLeading: false,
-                  actions: [
-                    IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-                  ],
+      // === ФОТО: тоже через proxy (S3 приватный!) ===
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (ctx) => Dialog(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppBar(
+                title: Text(fileName, maxLines: 1, overflow: TextOverflow.ellipsis),
+                automaticallyImplyLeading: false,
+                actions: [
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ],
+              ),
+              InteractiveViewer(
+                child: Image.network(
+                  proxyUrl,
+                  fit: BoxFit.contain,
+                  loadingBuilder: (context, child, progress) {
+                    if (progress == null) return child;
+                    return SizedBox(
+                      height: 300,
+                      child: Center(
+                        child: CircularProgressIndicator(
+                          value: progress.expectedTotalBytes != null && progress.expectedTotalBytes! > 0
+                              ? progress.cumulativeBytesLoaded / progress.expectedTotalBytes!
+                              : null,
+                        ),
+                      ),
+                    );
+                  },
+                  errorBuilder: (context, error, stackTrace) {
+                    print('Ошибка загрузки картинки: $error');
+                    return Container(
+                      height: 300,
+                      color: Colors.grey.shade200,
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.broken_image, size: 80, color: Colors.grey),
+                          const SizedBox(height: 16),
+                          const Text('Не удалось загрузить изображение'),
+                          const SizedBox(height: 8),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: SelectableText(
+                              'URL: $proxyUrl',
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 ),
-                InteractiveViewer(
-                  child: Image.network(fileUrl, fit: BoxFit.contain),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        );
-      }
+        ),
+      );
     }
   }
 

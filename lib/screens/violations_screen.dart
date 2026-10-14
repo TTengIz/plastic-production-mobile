@@ -23,17 +23,22 @@ class _ViolationsScreenState extends State<ViolationsScreen> {
   }
 
   Future<void> _loadViolations() async {
-    setState(() => _isLoading = true);
-    
-    final user = _authService.user;
-    if (user == null) {
-      setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = true);
+
+    final userId = _authService.userId;
+    if (userId == null) {
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
 
-    _violations = await _violationsService.getViolations(userId: user['id']);
-    
-    setState(() => _isLoading = false);
+    try {
+      _violations = await _violationsService.getViolations(userId: userId);
+    } catch (e) {
+      print('Ошибка загрузки нарушений: $e');
+      _violations = [];
+    }
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   String _formatTime(String? timeStr) {
@@ -89,24 +94,24 @@ class _ViolationsScreenState extends State<ViolationsScreen> {
                             (context, index) {
                               final violation = _violations[index];
                               final isLateStart = violation['violation_type'] == 'late_start';
-                              
+
                               return Card(
                                 margin: const EdgeInsets.only(bottom: 12),
                                 child: ListTile(
                                   leading: CircleAvatar(
-                                    backgroundColor: isLateStart 
-                                        ? Colors.orange 
+                                    backgroundColor: isLateStart
+                                        ? Colors.orange
                                         : Colors.red,
                                     child: Icon(
-                                      isLateStart 
-                                          ? Icons.access_time 
+                                      isLateStart
+                                          ? Icons.access_time
                                           : Icons.timer_off,
                                       color: Colors.white,
                                     ),
                                   ),
                                   title: Text(
-                                    isLateStart 
-                                        ? 'Опоздание' 
+                                    isLateStart
+                                        ? 'Опоздание'
                                         : 'Раннее завершение',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.bold,
@@ -119,18 +124,18 @@ class _ViolationsScreenState extends State<ViolationsScreen> {
                                       Text(
                                         'На ${violation['violation_minutes']} минут',
                                         style: TextStyle(
-                                          color: isLateStart 
-                                              ? Colors.orange 
+                                          color: isLateStart
+                                              ? Colors.orange
                                               : Colors.red,
                                           fontWeight: FontWeight.bold,
                                         ),
                                       ),
                                       const SizedBox(height: 4),
                                       Text(
-                                        'Дата: ${_formatTime(violation['actual_time'])}',
+                                        'Дата: ${_formatTime(violation['actual_time']?.toString())}',
                                       ),
                                       Text(
-                                        'Зафиксировано: ${_formatTime(violation['created_at'])}',
+                                        'Зафиксировано: ${_formatTime(violation['created_at']?.toString())}',
                                       ),
                                     ],
                                   ),

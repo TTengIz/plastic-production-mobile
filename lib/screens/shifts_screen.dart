@@ -27,130 +27,126 @@ class _ShiftsScreenState extends State<ShiftsScreen> {
   }
 
   Future<void> _loadShifts() async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
-    final user = _authService.user;
-    if (user == null) {
-      setState(() => _isLoading = false);
+    final userId = _authService.userId;
+    if (userId == null) {
+      if (mounted) setState(() => _isLoading = false);
       return;
     }
 
-    _shifts = await _shiftsService.getShifts(userId: user['id']);
-
-    // Проверяем есть ли активная смена
+    _shifts = await _shiftsService.getShifts(userId: userId);
     _hasActiveShift = _shifts.any((shift) => shift['status'] == 'active');
 
-    setState(() => _isLoading = false);
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _startShift() async {
-    final user = _authService.user;
-    if (user == null) return;
+    final userId = _authService.userId;
+    if (userId == null) return;
 
     setState(() => _isLoading = true);
 
-    final success = await _shiftsService.startShift(user['id']);
+    final success = await _shiftsService.startShift(userId);
 
-    if (success) {
-      // Проверяем на опоздание
-      final shifts = await _shiftsService.getShifts(userId: user['id']);
-      final activeShift = shifts.firstWhere(
-        (shift) => shift['status'] == 'active',
-        orElse: () => {},
-      );
-      
-      if (activeShift.isNotEmpty) {
-        final violationResult = await _violationsService.checkViolation(
-          userId: user['id'],
-          shiftId: activeShift['id'],
-          type: 'late_start',
+    if (!success) {
+      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Ошибка начала смены'), backgroundColor: Colors.red),
         );
-        
-        if (violationResult['violation'] == true && mounted) {
+      }
+      return;
+    }
+
+    // Один запрос — обновляем список смен
+    _shifts = await _shiftsService.getShifts(userId: userId);
+    _hasActiveShift = _shifts.any((s) => s['status'] == 'active');
+
+    final activeShift = _shifts.firstWhere(
+      (s) => s['status'] == 'active',
+      orElse: () => <String, dynamic>{},
+    );
+
+    if (mounted) setState(() => _isLoading = false);
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Смена начата'), backgroundColor: Colors.green),
+      );
+    }
+
+    // === Проверка нарушения в фоне (не блокирует UI) ===
+    if (activeShift.isNotEmpty) {
+      _violationsService.checkViolation(
+        userId: userId,
+        shiftId: activeShift['id'],
+        type: 'late_start',
+      ).then((result) {
+        if (result['violation'] == true && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(violationResult['message'] ?? 'Зафиксировано опоздание'),
+              content: Text(result['message'] ?? 'Зафиксировано опоздание'),
               backgroundColor: Colors.orange,
               duration: const Duration(seconds: 3),
             ),
           );
         }
-      }
-      
-      await _loadShifts();
-    }
-
-    setState(() => _isLoading = false);
-
-    if (success && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Смена начата'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ошибка начала смены'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      });
     }
   }
 
   Future<void> _endShift() async {
-    final user = _authService.user;
-    if (user == null) return;
+    final userId = _authService.userId;
+    if (userId == null) return;
 
-    // Получаем ID активной смены перед завершением
-    final shifts = await _shiftsService.getShifts(userId: user['id']);
-    final activeShift = shifts.firstWhere(
-      (shift) => shift['status'] == 'active',
-      orElse: () => {},
+    // === Берём активную смену из локального кеша (НЕ запрашиваем сервер) ===
+    final activeShift = _shifts.firstWhere(
+      (s) => s['status'] == 'active',
+      orElse: () => <String, dynamic>{},
     );
 
     setState(() => _isLoading = true);
 
-    final success = await _shiftsService.endShift(user['id']);
+    final success = await _shiftsService.endShift(userId);
 
-    if (success && activeShift.isNotEmpty) {
-      // Проверяем на раннее завершение
-      final violationResult = await _violationsService.checkViolation(
-        userId: user['id'],
-        shiftId: activeShift['id'],
-        type: 'early_end',
-      );
-      
-      if (violationResult['violation'] == true && mounted) {
+    if (!success) {
+      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(violationResult['message'] ?? 'Раннее завершение смены'),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 3),
-          ),
+          const SnackBar(content: Text('Ошибка завершения смены'), backgroundColor: Colors.red),
         );
       }
-      
-      await _loadShifts();
+      return;
     }
 
-    setState(() => _isLoading = false);
+    // Один запрос — обновляем список смен
+    await _loadShifts();
 
-    if (success && mounted) {
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Смена завершена'),
-          backgroundColor: Colors.green,
-        ),
+        const SnackBar(content: Text('Смена завершена'), backgroundColor: Colors.green),
       );
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Ошибка завершения смены'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    }
+
+    // === Проверка нарушения в фоне ===
+    if (activeShift.isNotEmpty) {
+      _violationsService.checkViolation(
+        userId: userId,
+        shiftId: activeShift['id'],
+        type: 'early_end',
+      ).then((result) {
+        if (result['violation'] == true && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result['message'] ?? 'Раннее завершение смены'),
+              backgroundColor: Colors.orange,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+        }
+      });
     }
   }
 
@@ -218,11 +214,11 @@ class _ShiftsScreenState extends State<ShiftsScreen> {
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(color: Colors.green),
                               ),
-                              child: Row(
+                              child: const Row(
                                 children: [
-                                  const Icon(Icons.check_circle, color: Colors.green),
-                                  const SizedBox(width: 8),
-                                  const Expanded(
+                                  Icon(Icons.check_circle, color: Colors.green),
+                                  SizedBox(width: 8),
+                                  Expanded(
                                     child: Text(
                                       'Смена активна',
                                       style: TextStyle(
@@ -242,11 +238,11 @@ class _ShiftsScreenState extends State<ShiftsScreen> {
                                 borderRadius: BorderRadius.circular(8),
                                 border: Border.all(color: Colors.orange),
                               ),
-                              child: Row(
+                              child: const Row(
                                 children: [
-                                  const Icon(Icons.info, color: Colors.orange),
-                                  const SizedBox(width: 8),
-                                  const Expanded(
+                                  Icon(Icons.info, color: Colors.orange),
+                                  SizedBox(width: 8),
+                                  Expanded(
                                     child: Text(
                                       'Смена не начата',
                                       style: TextStyle(
@@ -317,7 +313,7 @@ class _ShiftsScreenState extends State<ShiftsScreen> {
                   const SizedBox(height: 8),
 
                   // Список смен
-                  if (_isLoading)
+                  if (_isLoading && _shifts.isEmpty)
                     const Center(child: CircularProgressIndicator())
                   else if (_shifts.isEmpty)
                     Card(
