@@ -43,6 +43,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
     super.dispose();
   }
 
+  /// Безопасный парсер id (сервер может отдать строкой)
+  int _toInt(dynamic value) => int.tryParse(value.toString()) ?? 0;
+
   Future<void> _loadAll() async {
     if (mounted) setState(() => _isLoading = true);
 
@@ -69,9 +72,10 @@ class _TrainingScreenState extends State<TrainingScreen> {
 
   void _enterFolder(Map<String, dynamic> folder) {
     setState(() {
-      _currentFolderId = int.tryParse(folder['id'].toString());
+      _currentFolderId = _toInt(folder['id']);
       _currentFolderName = folder['name']?.toString() ?? 'Папка';
       _mediaFiles = [];
+      _folders = [];
     });
     _loadAll();
   }
@@ -234,7 +238,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     final response = await _mediaService.createFolder(
       name: result,
       category: _selectedCategory,
-      parentId: _currentFolderId, // <-- ВОТ ЭТО БЫЛО ПРОПУЩЕНО!
+      parentId: _currentFolderId,
     );
     setState(() => _isLoading = false);
 
@@ -258,9 +262,9 @@ class _TrainingScreenState extends State<TrainingScreen> {
   // === Удаление папки ===
 
   Future<void> _confirmDeleteFolder(Map<String, dynamic> folder) async {
-    final id = int.tryParse(folder['id'].toString()) ?? 0;
+    final id = _toInt(folder['id']);
     final name = folder['name']?.toString() ?? 'Папка';
-    final count = int.tryParse(folder['files_count'].toString()) ?? 0;
+    final count = _toInt(folder['files_count']);
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -308,7 +312,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   // === Удаление файла ===
 
   Future<void> _confirmDeleteMedia(Map<String, dynamic> media) async {
-    final mediaId = int.tryParse(media['id'].toString()) ?? 0;
+    final mediaId = _toInt(media['id']);
     final fileName = media['file_name'] ?? 'файл';
     if (mediaId <= 0) return;
 
@@ -351,7 +355,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
     }
   }
 
-  // === Просмотр ===
+  // === Просмотр (фото и видео через S3-proxy) ===
 
   Future<void> _showMediaViewer(Map<String, dynamic> media) async {
     final fileUrl = media['file_url']?.toString() ?? '';
@@ -470,7 +474,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
         ),
       );
     } else {
-      // === ФОТО: тоже через proxy (S3 приватный!) ===
+      // === ФОТО: через proxy (S3 приватный) ===
       if (!mounted) return;
       showDialog(
         context: context,
@@ -553,7 +557,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
   Widget _buildFolderTile(Map<String, dynamic> folder) {
     final canEdit = _roleService.isAdmin || _roleService.isManager;
     final name = folder['name']?.toString() ?? 'Папка';
-    final count = int.tryParse(folder['files_count'].toString()) ?? 0;
+    final count = _toInt(folder['files_count']);
 
     return Card(
       child: ListTile(
@@ -636,7 +640,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
           ? Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!inFolder || _selectedCategory == 'training') ...[
+                if (_selectedCategory == 'training') ...[
                   FloatingActionButton(
                     heroTag: 'add_folder',
                     onPressed: _showCreateFolderDialog,
@@ -670,7 +674,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                 onSelectionChanged: (Set<String> newSelection) {
                   setState(() {
                     _selectedCategory = newSelection.first;
-                    _currentFolderId = null; // Сброс при смене раздела
+                    _currentFolderId = null;
                     _currentFolderName = null;
                   });
                   _loadAll();
@@ -690,7 +694,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                               child: Column(
                                 children: [
                                   Icon(
-                                    inFolder ? Icons.folder_open : Icons.folder_open,
+                                    Icons.folder_open,
                                     size: 80,
                                     color: Colors.grey.withOpacity(0.5),
                                   ),
@@ -712,7 +716,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                       : ListView(
                           padding: const EdgeInsets.all(16),
                           children: [
-                            // === Папки (в корне или подпапки внутри папки) ===
+                            // === Папки в корне и подпапки внутри папки ===
                             if (_folders.isNotEmpty) ...[
                               Padding(
                                 padding: const EdgeInsets.only(bottom: 8),
@@ -748,7 +752,7 @@ class _TrainingScreenState extends State<TrainingScreen> {
                               ),
                             ],
 
-                            // === Файлы (в корне — без папки; внутри — только этой папки) ===
+                            // === Файлы (в корне — без папки; внутри — файлы папки) ===
                             if (_mediaFiles.isNotEmpty) ...[
                               if (inFolder) ...[
                                 Padding(
